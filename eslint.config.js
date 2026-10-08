@@ -17,5 +17,5 @@ export default defineConfig([
             "no-extra-boolean-cast": "off",
         },
     },
-    globalIgnores(["dist/*"]),
+    globalIgnores(["dist/*", "gateway/dist/*"]),
 ]);

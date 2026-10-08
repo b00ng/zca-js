@@ -1,0 +1,26 @@
+# Zalo gateway — chạy local, chỉ lắng nghe trên 127.0.0.1.
+# Mở ra tailnet bằng `tailscale serve` trên máy host (xem README),
+# hoặc dùng thêm docker-compose.tailscale.yml để chạy Tailscale dạng sidecar.
+name: zalo-gateway
+
+services:
+  zalo-gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: zalo-gateway:local
+    container_name: zalo-gateway
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - zalo-data:/data
+    ports:
+      - "127.0.0.1:${GATEWAY_HOST_PORT:-8080}:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  zalo-data:

@@ -1,0 +1,322 @@
+openapi: 3.0.3
+info:
+  title: Zalo Gateway API
+  version: 0.1.0
+  description: |
+    HTTP gateway over zca-js for sending Zalo messages to users and groups.
+    See INTEGRATION.md for the integration guide (Vietnamese).
+servers:
+  - url: https://zalo-gateway.your-tailnet.ts.net
+  - url: http://127.0.0.1:8080
+security:
+  - bearerAuth: []
+  - apiKeyHeader: []
+
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok } } }
+  /ready:
+    get:
+      summary: Readiness probe (200 only when the Zalo account is logged in)
+      security: []
+      responses:
+        "200": { description: Logged in, content: { application/json: { schema: { $ref: "#/components/schemas/Ready" } } } }
+        "503": { description: Not logged in, content: { application/json: { schema: { $ref: "#/components/schemas/Ready" } } } }
+
+  /v1/status:
+    get:
+      summary: Session, listener and queue status
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/auth/qr:
+    post:
+      summary: Start (or reuse) a QR login and return the QR image
+      responses:
+        "200":
+          description: QR code to scan with the Zalo mobile app (valid ~100s)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string }
+                  qr:
+                    type: object
+                    properties:
+                      imageBase64: { type: string }
+                      mimeType: { type: string, example: image/png }
+                      expiresAt: { type: string, format: date-time }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /v1/auth/qr.png:
+    get:
+      summary: Current QR code as PNG
+      responses:
+        "200": { description: PNG image, content: { image/png: { schema: { type: string, format: binary } } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/auth/logout:
+    post:
+      summary: Stop the session and delete saved credentials
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } } }
+
+  /v1/messages:
+    post:
+      summary: Send a message to a user or a group
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, maxLength: 200 }
+          description: Same key within 24h returns the original result instead of sending again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+            examples:
+              groupAlias:
+                summary: Group by alias, @All, urgent
+                value: { to: ops-alerts, text: "🔴 [P1] Payment API down", mentionAll: true, urgency: urgent }
+              userId:
+                summary: User by id
+                value: { to: { type: user, id: "1234567890123456789" }, text: "Ca đêm nay bạn trực." }
+              userPhone:
+                summary: User by phone
+                value: { to: { type: user, phone: "0912345678" }, text: "Đơn #A123 đã giao." }
+              image:
+                summary: Image from URL with caption
+                value: { to: ops-alerts, text: "Báo cáo ngày", attachments: [{ url: "https://example.internal/chart.png" }] }
+      responses:
+        "200":
+          description: Delivered to Zalo
+          headers:
+            Idempotent-Replayed: { schema: { type: string }, description: "true when the result was replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SendMessageResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+        "504": { $ref: "#/components/responses/Error" }
+
+  /v1/groups:
+    get:
+      summary: Groups the account is a member of
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        totalMember: { type: integer }
+                        isAdmin: { type: boolean }
+  /v1/friends:
+    get:
+      summary: Friends of the account
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  friends:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        displayName: { type: string }
+                        zaloName: { type: string }
+                        phoneNumber: { type: string }
+  /v1/users/lookup:
+    get:
+      summary: Find a Zalo user id by phone number (cached)
+      parameters:
+        - { in: query, name: phone, required: true, schema: { type: string, example: "0912345678" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uid: { type: string }
+                  displayName: { type: string }
+                  zaloName: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/aliases:
+    get:
+      summary: Configured recipient aliases
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aliases:
+                    type: object
+                    additionalProperties: { $ref: "#/components/schemas/AliasTarget" }
+  /v1/threads/recent:
+    get:
+      summary: Conversations that recently received messages (listener must be on)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string, enum: [user, group] }
+                        id: { type: string }
+                        lastSender: { type: string }
+                        lastText: { type: string, nullable: true }
+                        lastMessageAt: { type: string, format: date-time }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+    apiKeyHeader: { type: apiKey, in: header, name: X-API-Key }
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: NOT_LOGGED_IN
+              description: |
+                BAD_REQUEST, UNAUTHORIZED, NOT_FOUND, UNKNOWN_ALIAS, USER_NOT_FOUND, ALREADY_LOGGED_IN,
+                ATTACHMENT_TOO_LARGE, BODY_TOO_LARGE, QUEUE_FULL, ZALO_ERROR, ATTACHMENT_DOWNLOAD_FAILED,
+                QR_LOGIN_FAILED, NOT_LOGGED_IN, LISTENER_REQUIRED, SEND_TIMEOUT, NO_QR
+            message: { type: string }
+            details: {}
+
+    Ready:
+      type: object
+      properties:
+        ready: { type: boolean }
+        state: { type: string }
+
+    Status:
+      type: object
+      properties:
+        state: { type: string, enum: [starting, logged_out, awaiting_scan, scanned, logged_in] }
+        account:
+          type: object
+          nullable: true
+          properties:
+            uid: { type: string }
+            displayName: { type: string }
+        loggedInAt: { type: string, format: date-time, nullable: true }
+        listener: { type: string, enum: [disabled, stopped, connecting, connected, closed] }
+        queueSize: { type: integer }
+        lastError: { type: string, nullable: true }
+
+    AliasTarget:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [user, group] }
+        id: { type: string }
+        description: { type: string }
+
+    Recipient:
+      oneOf:
+        - type: string
+          description: Alias name configured on the gateway
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [user, group] }
+            id: { type: string, description: Zalo user id or group id }
+            phone: { type: string, description: "type=user only: phone number, e.g. 0912345678 or +84912345678" }
+            alias: { type: string }
+
+    Attachment:
+      type: object
+      properties:
+        url: { type: string, format: uri, description: The gateway downloads the file }
+        base64: { type: string, description: File content (data URL prefix allowed) }
+        filename: { type: string, description: "Required with base64; must have an extension (e.g. report.pdf)" }
+
+    SendMessageRequest:
+      type: object
+      required: [to]
+      properties:
+        to: { $ref: "#/components/schemas/Recipient" }
+        text: { type: string, description: Required unless attachments are given }
+        mentionAll: { type: boolean, description: "Group only: prefix with @All" }
+        mentions:
+          type: array
+          description: Group only. Positions are relative to text.
+          items:
+            type: object
+            required: [uid, pos, len]
+            properties:
+              uid: { type: string }
+              pos: { type: integer }
+              len: { type: integer }
+        urgency: { type: string, enum: [default, important, urgent] }
+        ttl: { type: integer, description: Auto-delete after N milliseconds }
+        attachments:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/Attachment" }
+
+    SendMessageResult:
+      type: object
+      properties:
+        to:
+          type: object
+          properties:
+            type: { type: string, enum: [user, group] }
+            id: { type: string }
+            alias: { type: string }
+        messageId: { type: string, nullable: true }
+        attachmentIds: { type: array, items: { type: string } }
+        sentAt: { type: string, format: date-time }
