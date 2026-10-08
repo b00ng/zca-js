@@ -176,6 +176,13 @@ See [examples](examples) folder for more details.
 
 ---
 
+## HTTP Gateway (Docker)
+
+The [gateway](gateway) folder packages this library as a Docker service with a REST API for sending messages to users and groups
+from other applications. See [gateway/README.md](gateway/README.md).
+
+---
+
 ## Projects & Useful Resources
 
 <div align="center">

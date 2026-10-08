@@ -1,0 +1,32 @@
+# Tuỳ chọn: chạy gateway như một node riêng trong tailnet (sidecar Tailscale).
+#   docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d
+# Gateway sẽ có địa chỉ https://<TS_HOSTNAME>.<tailnet>.ts.net (chứng chỉ HTTPS do Tailscale cấp).
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    container_name: zalo-gateway-tailscale
+    hostname: ${TS_HOSTNAME:-zalo-gateway}
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?Set TS_AUTHKEY in .env}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale:/config:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  zalo-gateway:
+    network_mode: service:tailscale
+    ports: !reset []
+    depends_on:
+      - tailscale
+
+volumes:
+  tailscale-state:
